@@ -3495,13 +3495,14 @@ namespace bgfx { namespace gl
 
 					if (GL_FRAMEBUFFER_COMPLETE == glCheckFramebufferStatus(GL_FRAMEBUFFER) )
 					{
+						const bool nativeReadback = TextureFormat::R32F == texture.m_textureFormat || TextureFormat::R16U == texture.m_textureFormat;
 						GL_CHECK(glReadPixels(
 							  0
 							, 0
 							, texture.m_width
 							, texture.m_height
-							, m_readPixelsFmt
-							, GL_UNSIGNED_BYTE
+							, nativeReadback ? texture.m_fmt  : m_readPixelsFmt
+							, nativeReadback ? texture.m_type : GL_UNSIGNED_BYTE
 							, _data
 							) );
 					}
