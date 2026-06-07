@@ -387,80 +387,35 @@ namespace bgfx { namespace wgpu
 
 #undef WGPU_RELEASE_FUNC
 
-	template<typename Ty>
-	class StateCacheT
+} // namespace wgpu
+
+	template<>
+	struct StateCacheFuncT<WGPUTextureView>
 	{
-	public:
-		void add(uint64_t _key, Ty _value, uint16_t _parent = UINT16_MAX)
+		static void evict(WGPUTextureView _value)
 		{
-			invalidate(_key);
-			m_hashMap.insert(stl::make_pair(_key, Data{_value, _parent}) );
+			wgpu::wgpuRelease(_value);
 		}
 
-		Ty find(uint64_t _key)
+		static void validate(WGPUTextureView /*_value*/, uint64_t /*_key*/)
 		{
-			typename HashMap::iterator it = m_hashMap.find(_key);
-			if (it != m_hashMap.end() )
-			{
-				return it->second.m_value;
-			}
-
-			return 0;
 		}
-
-		void invalidate(uint64_t _key)
-		{
-			typename HashMap::iterator it = m_hashMap.find(_key);
-			if (it != m_hashMap.end() )
-			{
-				wgpuRelease(it->second.m_value);
-				m_hashMap.erase(it);
-			}
-		}
-
-		void invalidateWithParent(uint16_t _parent)
-		{
-			for (typename HashMap::iterator it = m_hashMap.begin(), itEnd = m_hashMap.end(); it != itEnd;)
-			{
-				if (it->second.m_parent == _parent)
-				{
-					wgpuRelease(it->second.m_value);
-					typename HashMap::iterator itErase = it;
-					++it;
-					m_hashMap.erase(itErase);
-				}
-				else
-				{
-					++it;
-				}
-			}
-		}
-
-		void invalidate()
-		{
-			for (typename HashMap::iterator it = m_hashMap.begin(), itEnd = m_hashMap.end(); it != itEnd; ++it)
-			{
-				wgpuRelease(it->second.m_value);
-			}
-
-			m_hashMap.clear();
-		}
-
-		uint32_t getCount() const
-		{
-			return uint32_t(m_hashMap.size() );
-		}
-
-	private:
-		struct Data
-		{
-			Ty       m_value;
-			uint16_t m_parent;
-		};
-
-		typedef stl::unordered_map<uint64_t, Data> HashMap;
-		HashMap m_hashMap;
 	};
+
+	template<>
+	struct StateCacheFuncT<WGPUSampler>
+	{
+		static void evict(WGPUSampler _value)
+		{
+			wgpu::wgpuRelease(_value);
+		}
+
+		static void validate(WGPUSampler /*_value*/, uint64_t /*_key*/)
+		{
+		}
+	};
+
+namespace wgpu {
 
 	inline constexpr WGPUStringView toWGPUStringView(const bx::StringView& _str)
 	{
@@ -473,50 +428,22 @@ namespace bgfx { namespace wgpu
 		uint32_t offsets[2];
 	};
 
-	struct ChunkedScratchBufferAlloc
+	struct ChunkWGPU
 	{
-		uint32_t offset;
-		uint32_t chunkIdx;
+		WGPUBuffer buffer;
+		uint8_t* data;
 	};
 
-	struct ChunkedScratchBufferWGPU
+	struct ChunkedScratchBufferWGPU : ChunkedScratchBufferT<ChunkedScratchBufferWGPU, WGPUBuffer, ChunkWGPU>
 	{
-		ChunkedScratchBufferWGPU()
-			: m_chunkControl(0)
-		{
-		}
-
-		void create(uint32_t _chunkSize, uint32_t _numChunks, WGPUBufferUsage _usage, uint32_t _align);
 		void createUniform(uint32_t _chunkSize, uint32_t _numChunks);
-		void destroy();
 
-		void addChunk(uint32_t _at = UINT32_MAX);
-		ChunkedScratchBufferAlloc alloc(uint32_t _size);
+		void createChunk(ChunkWGPU& _chunk);
+		void destroyChunk(ChunkWGPU& _chunk);
+		void flushChunk(ChunkWGPU& _chunk, uint32_t _size);
+		uint32_t currentFrameInFlight() const;
 
-		void write(ChunkedScratchBufferOffset& _outSbo, const void* _vsData, uint32_t _vsSize, const void* _fsData = NULL, uint32_t _fsSize = 0);
-
-		void begin();
-		void end();
-		void flush();
-
-		struct Chunk
-		{
-			WGPUBuffer buffer;
-			uint8_t* data;
-		};
-
-		using ScratchBufferChunksArray = stl::vector<Chunk>;
-
-		ScratchBufferChunksArray m_chunks;
-		bx::RingBufferControl m_chunkControl;
-
-		uint32_t m_chunkPos;
-		uint32_t m_chunkSize;
-		uint32_t m_align;
 		WGPUBufferUsage m_usage;
-
-		uint32_t m_consume[BGFX_CONFIG_MAX_FRAME_LATENCY];
-		uint32_t m_totalUsed;
 	};
 
 	struct BufferWGPU

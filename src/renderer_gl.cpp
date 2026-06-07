@@ -3439,33 +3439,85 @@ namespace bgfx { namespace gl
 			m_textures[_handle.idx].update(_side, _mip, _rect, _z, _depth, _pitch, _mem);
 		}
 
-		void readTexture(TextureHandle _handle, void* _data, uint8_t _mip) override
+		void readTexture(TextureHandle _handle, void* _data, uint16_t _layer, uint8_t _mip) override
 		{
 			if (m_readBackSupported)
 			{
 				const TextureGL& texture = m_textures[_handle.idx];
 				const bool compressed    = bimg::isCompressed(bimg::TextureFormat::Enum(texture.m_textureFormat) );
 
-				GL_CHECK(glBindTexture(texture.m_target, texture.m_id) );
-
-				if (compressed)
+				if (texture.m_numLayers > 1
+				&&  NULL != glGetTextureSubImage)
 				{
-					GL_CHECK(glGetCompressedTexImage(texture.m_target
-						, _mip
-						, _data
-						) );
+					const uint32_t mipWidth  = bx::max<uint32_t>(1, texture.m_width  >> _mip);
+					const uint32_t mipHeight = bx::max<uint32_t>(1, texture.m_height >> _mip);
+
+					bimg::TextureInfo ti;
+					bimg::imageGetSize(
+						  &ti
+						, uint16_t(mipWidth)
+						, uint16_t(mipHeight)
+						, 1
+						, false
+						, false
+						, 1
+						, bimg::TextureFormat::Enum(texture.m_textureFormat)
+						);
+
+					if (compressed)
+					{
+						GL_CHECK(glGetCompressedTextureSubImage(texture.m_id
+							, _mip
+							, 0
+							, 0
+							, _layer
+							, mipWidth
+							, mipHeight
+							, 1
+							, ti.storageSize
+							, _data
+							) );
+					}
+					else
+					{
+						GL_CHECK(glGetTextureSubImage(texture.m_id
+							, _mip
+							, 0
+							, 0
+							, _layer
+							, mipWidth
+							, mipHeight
+							, 1
+							, texture.m_fmt
+							, texture.m_type
+							, ti.storageSize
+							, _data
+							) );
+					}
 				}
 				else
 				{
-					GL_CHECK(glGetTexImage(texture.m_target
-						, _mip
-						, texture.m_fmt
-						, texture.m_type
-						, _data
-						) );
-				}
+					GL_CHECK(glBindTexture(texture.m_target, texture.m_id) );
 
-				GL_CHECK(glBindTexture(texture.m_target, 0) );
+					if (compressed)
+					{
+						GL_CHECK(glGetCompressedTexImage(texture.m_target
+							, _mip
+							, _data
+							) );
+					}
+					else
+					{
+						GL_CHECK(glGetTexImage(texture.m_target
+							, _mip
+							, texture.m_fmt
+							, texture.m_type
+							, _data
+							) );
+					}
+
+					GL_CHECK(glBindTexture(texture.m_target, 0) );
+				}
 			}
 			else if (BX_ENABLED(BGFX_GL_CONFIG_TEXTURE_READ_BACK_EMULATION) )
 			{
@@ -3475,18 +3527,31 @@ namespace bgfx { namespace gl
 				if (!compressed)
 				{
 					Attachment at[1];
-					at[0].init(_handle);
+					at[0].init(_handle, Access::Read, _layer, 1, _mip);
 
 					FrameBufferGL frameBuffer;
 					frameBuffer.create(BX_COUNTOF(at), at);
 					GL_CHECK(glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer.m_fbo[0]) );
-					GL_CHECK(glFramebufferTexture2D(
-						  GL_FRAMEBUFFER
-						, GL_COLOR_ATTACHMENT0
-						, GL_TEXTURE_2D
-						, texture.m_id
-						, at[0].mip
-						) );
+					if (texture.m_numLayers > 1)
+					{
+						GL_CHECK(glFramebufferTextureLayer(
+							  GL_FRAMEBUFFER
+							, GL_COLOR_ATTACHMENT0
+							, texture.m_id
+							, at[0].mip
+							, _layer
+							) );
+					}
+					else
+					{
+						GL_CHECK(glFramebufferTexture2D(
+							  GL_FRAMEBUFFER
+							, GL_COLOR_ATTACHMENT0
+							, GL_TEXTURE_2D
+							, texture.m_id
+							, at[0].mip
+							) );
+					}
 
 					if (BX_ENABLED(BGFX_CONFIG_RENDERER_OPENGL) || m_gles3)
 					{
@@ -4264,7 +4329,7 @@ namespace bgfx { namespace gl
 					murmur.add(-1);
 					hash = murmur.end();
 
-					sampler = m_samplerStateCache.find(hash);
+					sampler = m_samplerStateCache.find(hash).idx;
 				}
 				else
 				{
@@ -4274,17 +4339,17 @@ namespace bgfx { namespace gl
 					if (NULL != _rgba)
 					{
 						hasBorderColor = true;
-						sampler = UINT32_MAX;
+						sampler = 0;
 					}
 					else
 					{
-						sampler = m_samplerStateCache.find(hash);
+						sampler = m_samplerStateCache.find(hash).idx;
 					}
 				}
 
-				if (UINT32_MAX == sampler)
+				if (0 == sampler)
 				{
-					sampler = m_samplerStateCache.add(hash);
+					GL_CHECK(glGenSamplers(1, &sampler) );
 
 					GL_CHECK(glSamplerParameteri(sampler
 						, GL_TEXTURE_WRAP_S
@@ -4336,6 +4401,8 @@ namespace bgfx { namespace gl
 							GL_CHECK(glSamplerParameteri(sampler, GL_TEXTURE_COMPARE_FUNC, s_cmpFunc[cmpFunc]) );
 						}
 					}
+
+					m_samplerStateCache.add(hash, SamplerGL{sampler});
 				}
 
 				GL_CHECK(glBindSampler(_stage, sampler) );
@@ -4826,8 +4893,8 @@ namespace bgfx { namespace gl
 		TimerQueryGL m_gpuTimer;
 		OcclusionQueryGL m_occlusionQuery;
 
-		SamplerStateCache m_samplerStateCache;
-		TextureViewStateCache m_textureViewStateCache;
+		StateCacheT<SamplerGL> m_samplerStateCache;
+		StateCacheT<TextureViewGL> m_textureViewStateCache;
 		UniformStateCache m_uniformStateCache;
 
 		TextVideoMem m_textVideoMem;
@@ -6051,7 +6118,7 @@ namespace bgfx { namespace gl
 			;
 		const bool unpackRowLength = !!BGFX_CONFIG_RENDERER_OPENGL || s_extension[Extension::EXT_unpack_subimage].m_supported;
 		const bool convert         = false
-			|| (compressed && m_textureFormat != m_requestedFormat)
+			|| m_textureFormat != m_requestedFormat
 			|| swizzle
 			;
 
@@ -6292,13 +6359,14 @@ namespace bgfx { namespace gl
 			| (uint64_t(numLayers)  <<  0)
 			;
 
-		GLuint viewId = s_renderGL->m_textureViewStateCache.find(key);
-		if (UINT32_MAX != viewId)
+		GLuint viewId = s_renderGL->m_textureViewStateCache.find(key).idx;
+		if (0 != viewId)
 		{
 			return viewId;
 		}
 
-		viewId = s_renderGL->m_textureViewStateCache.add(key, parent);
+		GL_CHECK(glGenTextures(1, &viewId) );
+		s_renderGL->m_textureViewStateCache.add(key, TextureViewGL{viewId}, parent);
 		GL_CHECK(glTextureView(viewId
 			, m_target
 			, m_id
@@ -8498,7 +8566,7 @@ namespace bgfx { namespace gl
 								const uint8_t idx = it.idx;
 
 								const VertexBufferGL& vb = m_vertexBuffers[draw.m_stream[idx].m_handle.idx];
-								uint16_t decl = !isValid(vb.m_layoutHandle) ? draw.m_stream[idx].m_layoutHandle.idx : vb.m_layoutHandle.idx;
+								uint16_t decl = isValid(draw.m_stream[idx].m_layoutHandle) ? draw.m_stream[idx].m_layoutHandle.idx : vb.m_layoutHandle.idx;
 								const VertexLayout& layout = m_vertexLayouts[decl];
 
 								numVertices = bx::min(numVertices, vb.m_size/layout.m_stride);
