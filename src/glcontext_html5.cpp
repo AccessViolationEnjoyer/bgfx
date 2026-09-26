@@ -88,6 +88,7 @@ namespace bgfx { namespace gl
 		{
 			if (emscripten_webgl_get_context_attributes(context, &s_attrs) >= 0)
 			{
+				m_msaaContext = s_attrs.antialias;
 				import(s_attrs.majorVersion);
 				m_primary = BX_NEW(g_allocator, SwapChainGL)(context, canvas);
 			}
@@ -236,6 +237,10 @@ namespace bgfx { namespace gl
 				);                                                                  \
 		}                                                                           \
 	}
+
+		// WebGL 2 exposes these functions without extension suffixes.
+		GL_EXTENSION(true, PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample, glRenderbufferStorageMultisample);
+		GL_EXTENSION(true, PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer, glBlitFramebuffer);
 
 #	include "glimports.h"
 
