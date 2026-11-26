@@ -1809,6 +1809,13 @@ namespace bgfx { namespace gl
 					&& (!_srgb || emscripten_webgl_enable_extension(ctx, "WEBGL_compressed_texture_s3tc_srgb") )
 					;
 
+			case TextureFormat::BC6H:
+			case TextureFormat::BC7:
+				// BC6H has no sRGB variant.
+				return (!_srgb || _format == TextureFormat::BC7)
+					&& emscripten_webgl_enable_extension(ctx, "EXT_texture_compression_bptc")
+					;
+
 			case TextureFormat::PTC12:
 			case TextureFormat::PTC14:
 			case TextureFormat::PTC12A:
